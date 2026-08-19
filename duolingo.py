@@ -34,9 +34,20 @@ class CaptchaException(DuolingoException):
     pass
 
 
+class OtherUserException(DuolingoException):
+    pass
+
+
 class Duolingo(object):
     USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.116 " \
                  "Safari/537.36"
+    ANDROID_USER_AGENT = "Duodroid/6.58.6 (Linux; Android 12)"
+
+    TIER_NAMES = ["Bronze", "Silver", "Gold", "Sapphire", "Ruby",
+                  "Emerald", "Amethyst", "Pearl", "Obsidian", "Diamond"]
+
+    LEADERBOARD_URL = "https://duolingo-leaderboards-prod.duolingo.com/leaderboards/" \
+                      "7d9f5dd1-8423-491a-91f2-2532052038ce"
 
     def __init__(self, username, password=None, *, jwt=None, session_file=None):
         """
@@ -61,20 +72,22 @@ class Duolingo(object):
         self.user_id = self.user_data.id
         self.voice_url_dict = None
 
-    def _make_req(self, url, data=None, params=None, method=None):
-        headers = {}
+    def _make_req(self, url, data=None, params=None, method=None, headers=None):
+        req_headers = {}
         if self.jwt is not None:
-            headers['Authorization'] = 'Bearer ' + self.jwt
+            req_headers['Authorization'] = 'Bearer ' + self.jwt
             self.session.cookies.set("jwt_token", self.jwt, domain=".duolingo.com")
 
-        headers['User-Agent'] = self.USER_AGENT
+        req_headers['User-Agent'] = self.USER_AGENT
+        if headers:
+            req_headers.update(headers)
         if not method:
             method = 'POST' if data else 'GET'
         req = requests.Request(method,
                                url,
                                json=data,
                                params=params,
-                               headers=headers)
+                               headers=req_headers)
         prepped = req.prepare()
         resp = self.session.send(prepped)
         if resp.status_code == 403 and resp.json().get("blockScript") is not None:
@@ -157,7 +170,7 @@ class Duolingo(object):
         :rtype: List
         """
 
-        url = f"https://duolingo-leaderboards-prod.duolingo.com/leaderboards/7d9f5dd1-8423-491a-91f2-2532052038ce/users/{self.user_id}"
+        url = f"{self.LEADERBOARD_URL}/users/{self.user_id}"
 
         leader_data = self._make_req(url).json()
         if not leader_data.get("active"):
@@ -168,6 +181,52 @@ class Duolingo(object):
         for i, player in enumerate(self.get_leaderboard()):
             if player["user_id"] == self.user_id:
                 return i + 1
+
+    def get_league_info(self):
+        """
+        Get the user's current league information from
+        ``https://duolingo-leaderboards-prod.duolingo.com/leaderboards/7d9f5dd1-8423-491a-91f2-2532052038ce/users/<user_id>``
+
+        :return: Dict with the current league tier (Bronze..Diamond), the user's
+                 score and position, promotion/demotion flags, contest dates
+                 and league lifetime stats.
+        :rtype: dict
+        """
+        url = f"{self.LEADERBOARD_URL}/users/{self.user_id}"
+        leader_data = self._make_req(url).json()
+
+        active = leader_data.get("active") or {}
+        cohort = active.get("cohort") or {}
+        contest = active.get("contest") or {}
+        stats = leader_data.get("stats") or {}
+
+        tier = leader_data.get("tier")
+        if tier is not None and 0 <= tier < len(self.TIER_NAMES):
+            tier_name = self.TIER_NAMES[tier]
+        else:
+            tier_name = None
+
+        position = None
+        score = active.get("score")
+        for i, player in enumerate(cohort.get("rankings", [])):
+            if player.get("user_id") == self.user_id:
+                position = i + 1
+                score = player.get("score", score)
+
+        return {
+            "tier": tier,
+            "tier_name": tier_name,
+            "position": position,
+            "cohort_size": len(cohort.get("rankings", [])),
+            "score": score,
+            "contest_start": contest.get("contest_start"),
+            "contest_end": contest.get("contest_end"),
+            "is_demoted": active.get("is_demoted"),
+            "is_promoted": active.get("is_promoted"),
+            "is_winner": active.get("is_winner"),
+            "streak_in_tier": leader_data.get("streak_in_tier"),
+            "stats": stats,
+        }
 
     def buy_item(self, item_name):
         url = f'https://www.duolingo.com/2017-06-30/users/{self.user_id}/shop-items'
@@ -282,7 +341,7 @@ class Duolingo(object):
 
         for key in keys:
             if type(array) == dict:
-                data[key] = array[key]
+                data[key] = array.get(key)
             else:
                 data[key] = getattr(array, key, None)
 
@@ -357,10 +416,10 @@ class Duolingo(object):
 
     def get_abbreviation_of(self, name):
         """Get abbreviation of a language."""
-        if not self.abbr_to_lang:
-            self.abbr_to_lang = {lang['language_string'].lower():lang['language'] for lang in self.user_data.languages}
+        if not self.lang_to_abbr:
+            self.lang_to_abbr = {lang['language_string'].lower(): lang['language'] for lang in self.user_data.languages}
 
-        return self.abbr_to_lang.get(name.lower())
+        return self.lang_to_abbr.get(name.lower())
 
     def get_language_details(self, language):
         """Get user's status about a language."""
@@ -417,13 +476,13 @@ class Duolingo(object):
         fields = ['streak', 'language_string', 'level_progress',
                   'num_skills_learned', 'level_percent', 'level_points',
                   'next_level', 'level_left', 'language',
-                  'points', 'fluency_score', 'level']
+                  'points', 'points_rank', 'fluency_score', 'level']
 
         return self._make_dict(fields, self.user_data.language_data[lang])
 
     def get_friends(self, limit=1000):
         """Get user's friends."""
-        get = self._make_req("https://friends-prod.duolingo.com/users/951841364/profile", params={"pageSize": limit})
+        get = self._make_req(f"https://friends-prod.duolingo.com/users/{self.user_id}/profile", params={"pageSize": limit})
 
         return get.json()["following"]["users"]
 
@@ -741,12 +800,233 @@ class Duolingo(object):
             "xp_today": sum(x['xp'] for x in lessons)
         }
 
+    def get_xp_summaries(self):
+        """
+        Get the user's daily XP summaries from
+        ``https://www.duolingo.com/2017-06-30/users/<user_id>/xp_summaries``.
+
+        Each entry describes one day and contains the XP gained, whether the
+        streak was extended, frozen or repaired, the number of sessions and
+        the total session time.
+
+        :return: List of daily summaries, newest first
+        :rtype: list of dict
+        """
+        url = f"https://www.duolingo.com/2017-06-30/users/{self.user_id}/xp_summaries"
+        return self._make_req(url).json().get("summaries", [])
+
+    def get_total_xp(self):
+        """Get the user's total XP."""
+        return self._get_data_by_user_id(fields=["totalXp"])
+
+    def get_weekly_xp(self):
+        """Get the user's XP gained this week."""
+        return self._get_data_by_user_id(fields=["weeklyXp"])
+
+    def get_shop_items(self):
+        """
+        Get the user's inventory from
+        ``https://www.duolingo.com/2017-06-30/users/<user_id>?fields=shopItems``.
+
+        :return: List of owned items (e.g. streak freezes, XP boosts)
+        :rtype: list of dict
+        """
+        return self._get_data_by_user_id(fields=["shopItems"]) or []
+
+    def _get_quest_request_headers(self):
+        return {
+            "User-Agent": self.ANDROID_USER_AGENT,
+            "Accept": "application/json; charset=UTF-8",
+        }
+
+    def _get_quest_params(self):
+        timezone = getattr(self.user_data, "timezone", None) or "UTC"
+        ui_language = getattr(self.user_data, "ui_language", None) or "en"
+        return {"timezone": timezone, "ui_language": ui_language}
+
+    _quest_schema_cache = None
+
+    def get_quest_schema(self):
+        """
+        Get the goal/quest definitions from
+        ``https://goals-api.duolingo.com/schema``.
+
+        Describes every quest type (daily quests, monthly challenges, friends
+        quests, ...) with its metric, threshold and localized title.
+
+        :return: List of goal definitions
+        :rtype: list of dict
+        """
+        if self._quest_schema_cache is None:
+            resp = self._make_req(
+                "https://goals-api.duolingo.com/schema",
+                params=self._get_quest_params(),
+                headers=self._get_quest_request_headers(),
+            )
+            self._quest_schema_cache = resp.json().get("goals", [])
+        return self._quest_schema_cache
+
+    def get_quest_progress(self):
+        """
+        Get the user's raw quest progress from
+        ``https://goals-api.duolingo.com/users/<user_id>/progress``.
+
+        Contains progress values for every goal type, per-goal details
+        (with daily increments and friends-quest partner data), historical
+        stats, earned badges and the quest difficulty level.
+
+        :return: Dict with ``goals``, ``badges`` and ``difficulty`` keys
+        :rtype: dict
+        """
+        url = f"https://goals-api.duolingo.com/users/{self.user_id}/progress"
+        resp = self._make_req(
+            url,
+            params=self._get_quest_params(),
+            headers=self._get_quest_request_headers(),
+        )
+        return resp.json()
+
+    def _interpret_quests(self, category):
+        progress_data = self.get_quest_progress()
+        details = progress_data.get("goals", {}).get("details", {})
+        schema_by_id = {goal["goalId"]: goal for goal in self.get_quest_schema()}
+
+        quests = []
+        for goal_id, detail in details.items():
+            schema = schema_by_id.get(goal_id, {})
+            if schema.get("category") != category:
+                continue
+            quests.append({
+                "goal_id": goal_id,
+                "title": (schema.get("title") or {}).get("uiString"),
+                "metric": schema.get("metric"),
+                "threshold": schema.get("threshold"),
+                "progress": detail.get("progress", 0),
+                "progress_increments": detail.get("progressIncrements", []),
+                "social_progress": detail.get("socialProgress"),
+                "badge_id": schema.get("badgeId"),
+            })
+        return quests
+
+    def get_daily_quests(self):
+        """
+        Get the user's daily quest progress.
+
+        Interprets the goals API progress with the schema so each quest has
+        its title, metric, threshold and progress.
+
+        :return: List of daily quests
+        :rtype: list of dict
+        """
+        return self._interpret_quests("DAILY_QUESTS")
+
+    def get_monthly_challenge(self):
+        """
+        Get the current monthly challenge progress along with the badges
+        earned for previous monthly challenges.
+
+        :return: Dict with the current challenge and earned badges
+        :rtype: dict
+        """
+        progress_data = self.get_quest_progress()
+        details = progress_data.get("goals", {}).get("details", {})
+        schema_by_id = {goal["goalId"]: goal for goal in self.get_quest_schema()}
+
+        challenge = None
+        for goal_id, detail in details.items():
+            if not goal_id.endswith("_monthly_challenge"):
+                continue
+            schema = schema_by_id.get(goal_id, {})
+            challenge = {
+                "goal_id": goal_id,
+                "title": (schema.get("title") or {}).get("uiString"),
+                "threshold": schema.get("threshold"),
+                "progress": detail.get("progress", 0),
+                "progress_increments": detail.get("progressIncrements", []),
+                "badge_id": schema.get("badgeId"),
+            }
+            break
+
+        return {
+            "challenge": challenge,
+            "earned_badges": progress_data.get("badges", {}).get("earned", []),
+        }
+
+    def get_friends_quest(self):
+        """
+        Get the current friends quest progress, including the partner.
+
+        :return: Dict with quest progress and partner info, or None when no
+                 friends quest is active
+        :rtype: dict or None
+        """
+        progress_data = self.get_quest_progress()
+        details = progress_data.get("goals", {}).get("details", {})
+        schema_by_id = {goal["goalId"]: goal for goal in self.get_quest_schema()}
+
+        for goal_id, detail in details.items():
+            schema = schema_by_id.get(goal_id, {})
+            if schema.get("category") != "SOCIAL_COLLABORATION_EVENTS":
+                continue
+            return {
+                "goal_id": goal_id,
+                "title": (schema.get("title") or {}).get("uiString"),
+                "threshold": schema.get("threshold"),
+                "progress": detail.get("progress", 0),
+                "progress_increments": detail.get("progressIncrements", []),
+                "social_progress": detail.get("socialProgress"),
+            }
+        return None
+
+    def get_friend_streak(self):
+        """
+        Get the user's friend streak matches from
+        ``https://www.duolingo.com/2023-05-23/friends/users/<user_id>/matches``
+        and ``https://www.duolingo.com/friends-streak/matches``.
+
+        :return: List of matches with the streak partner, length and dates
+        :rtype: list of dict
+        """
+        url = f"https://www.duolingo.com/2023-05-23/friends/users/{self.user_id}/matches"
+        resp = self._make_req(url, params={"activityName": "friendsStreak"})
+        matches = resp.json().get("friendsStreak", {}).get("confirmedMatches", [])
+
+        result = []
+        for match in matches:
+            match_id = match.get("matchId")
+            if not match_id:
+                continue
+            detail_resp = self._make_req(
+                "https://www.duolingo.com/friends-streak/matches",
+                params={"matchIds": match_id},
+            )
+            streak_matches = detail_resp.json().get("friendsStreak", [])
+            streak_entry = None
+            has_active_streak = None
+            if streak_matches:
+                has_active_streak = streak_matches[0].get("hasActiveStreak")
+                streaks = streak_matches[0].get("streaks") or []
+                if streaks:
+                    streak_entry = streaks[0]
+            result.append({
+                "match_id": match_id,
+                "users": match.get("usersInMatch", []),
+                "has_active_streak": has_active_streak,
+                "streak_length": (streak_entry or {}).get("streakLength"),
+                "start_date": (streak_entry or {}).get("startDate"),
+                "end_date": (streak_entry or {}).get("endDate"),
+                "last_extended_date": (streak_entry or {}).get("lastExtendedDate"),
+            })
+        return result
+
 
 if __name__ == "__main__":
     attrs = [
         'settings', 'languages', 'user_info', 'streak_info',
         'calendar', 'language_progress', 'friends', 'known_words',
-        'learned_skills', 'known_topics', 'vocabulary'
+        'learned_skills', 'known_topics', 'vocabulary',
+        'league_info', 'daily_quests', 'monthly_challenge', 'friends_quest',
+        'xp_summaries', 'friend_streak', 'shop_items'
     ]
 
     for attr in attrs:

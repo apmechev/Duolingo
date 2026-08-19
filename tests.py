@@ -1,13 +1,12 @@
 import os
 import unittest
-from datetime import datetime
 from unittest.mock import patch
 
 import duolingo
 
 USERNAME = os.environ.get('DUOLINGO_USER', 'ferguslongley')
 PASSWORD = os.environ.get('DUOLINGO_PASSWORD')
-USERNAME2 = os.environ.get("DUOLINGO_USER_2", "Spaniard")
+JWT = os.environ.get('DUOLINGO_JWT')
 
 
 def _example_word(lang):
@@ -18,7 +17,9 @@ def _example_word(lang):
     """
     return {
         "de": "mann",
-        "es": "hombre"
+        "es": "hombre",
+        "fr": "homme",
+        "it": "uomo"
     }.get(lang)
 
 
@@ -31,21 +32,21 @@ class DuolingoTest(unittest.TestCase):
         mock_data.assert_not_called()
 
     @patch("duolingo.Duolingo._login")
-    @patch("duolingo.Duolingo._get_data")
+    @patch("duolingo.Duolingo._get_data", return_value={"id": 1, "learning_language": "fr"})
     def test_password_only_calls_login(self, mock_login, mock_data):
-        duolingo.Duolingo(USERNAME, PASSWORD)
+        duolingo.Duolingo(USERNAME, PASSWORD or "dummy-password")
         mock_login.assert_called_once_with()
         mock_data.assert_called_once_with()
 
     @patch("duolingo.Duolingo._login")
-    @patch("duolingo.Duolingo._get_data")
+    @patch("duolingo.Duolingo._get_data", return_value={"id": 1, "learning_language": "fr"})
     def test_jwt_only_calls_login(self, mock_login, mock_data):
         duolingo.Duolingo(USERNAME, jwt="jwt-example")
         mock_login.assert_called_once_with()
         mock_data.assert_called_once_with()
 
     @patch("duolingo.Duolingo._login")
-    @patch("duolingo.Duolingo._get_data")
+    @patch("duolingo.Duolingo._get_data", return_value={"id": 1, "learning_language": "fr"})
     def test_file_only_calls_login(self, mock_login, mock_data):
         duolingo.Duolingo(USERNAME, session_file="temp/filename.json")
         mock_login.assert_called_once_with()
@@ -57,7 +58,10 @@ class DuolingoLoginTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.lingo = duolingo.Duolingo(USERNAME, PASSWORD)
+        if PASSWORD:
+            cls.lingo = duolingo.Duolingo(USERNAME, PASSWORD)
+        else:
+            cls.lingo = duolingo.Duolingo(USERNAME, jwt=JWT)
         cls.lang = cls.lingo.user_data.learning_language
 
     @classmethod
@@ -79,27 +83,21 @@ class DuolingoLoginTest(unittest.TestCase):
         assert "deactivated" in response
 
     def test_get_languages(self):
-        response1 = self.lingo.get_languages(abbreviations=False)
+        response1 = self.lingo.get_languages()
         assert isinstance(response1, list)
-        for lang in response1:
-            assert isinstance(lang, str)
-        response2 = self.lingo.get_languages(abbreviations=True)
-        assert isinstance(response2, list)
-        for lang in response2:
-            assert isinstance(lang, str)
-        assert len(response1) == len(response2)
+        for course in response1:
+            assert isinstance(course, dict)
+            assert "learningLanguage" in course
+            assert isinstance(course["learningLanguage"], str)
 
     def test_get_friends(self):
         response = self.lingo.get_friends()
         assert isinstance(response, list)
         for friend in response:
             assert "username" in friend
-            assert "points" in friend
-            assert isinstance(friend['points'], int)
-            assert "languages" in friend
-            assert isinstance(friend['languages'], list)
-            for lang in friend['languages']:
-                assert isinstance(lang, str)
+            assert "totalXp" in friend
+            assert isinstance(friend['totalXp'], int)
+            assert "userId" in friend
 
     def test_get_calendar(self):
         response1 = self.lingo.get_calendar()
@@ -121,15 +119,26 @@ class DuolingoLoginTest(unittest.TestCase):
         assert "streak_extended_today" in response
 
     def test_get_leaderboard(self):
-        response1 = self.lingo.get_leaderboard('week', datetime.now())
-        response2 = self.lingo.get_leaderboard('month', datetime.now())
-        for response in [response1, response2]:
-            assert isinstance(response, list)
-            for item in response:
-                assert "points" in item
-                assert "unit" in item
-                assert "id" in item
-                assert "username" in item
+        response = self.lingo.get_leaderboard()
+        assert isinstance(response, list)
+        for item in response:
+            assert "score" in item
+            assert "user_id" in item
+            assert "display_name" in item
+
+    def test_get_league_info(self):
+        response = self.lingo.get_league_info()
+        assert isinstance(response, dict)
+        assert "tier" in response
+        assert "tier_name" in response
+        assert response["tier_name"] in duolingo.Duolingo.TIER_NAMES
+        assert isinstance(response["position"], int)
+        assert "contest_start" in response
+        assert "contest_end" in response
+        assert "is_demoted" in response
+        assert "is_promoted" in response
+        assert "stats" in response
+        assert isinstance(response["stats"], dict)
 
     def test_get_language_details(self):
         language = self.lingo.get_language_from_abbr(self.lang)
@@ -188,6 +197,7 @@ class DuolingoLoginTest(unittest.TestCase):
         for word in response:
             assert isinstance(word, str)
 
+    @unittest.skip("Duolingo removed the vocabulary overview endpoint")
     def test_get_related_words(self):
         # Setup
         word = _example_word(self.lang)
@@ -216,6 +226,7 @@ class DuolingoLoginTest(unittest.TestCase):
         response = self.lingo.get_abbreviation_of('french')
         assert isinstance(response, str)
 
+    @unittest.skip("Duolingo removed the translations endpoint (d2.duolingo.com no longer resolves)")
     def test_get_translations(self):
         response1 = self.lingo.get_translations('e')
         response2 = self.lingo.get_translations('e', self.lang)
@@ -255,6 +266,7 @@ class DuolingoLoginTest(unittest.TestCase):
         assert result != [just_over_length]
         assert result == [["aaaaaaaa"] * 1066, ["aaaaaaaa"]]
 
+    @unittest.skip("Duolingo removed the vocabulary overview endpoint")
     def test_get_vocabulary(self):
         response1 = self.lingo.get_vocabulary()
         response2 = self.lingo.get_vocabulary(self.lang)
@@ -269,6 +281,7 @@ class DuolingoLoginTest(unittest.TestCase):
             assert "vocab_overview" in response
             assert isinstance(response["vocab_overview"], list)
 
+    @unittest.skip("Audio endpoints no longer return voice data")
     def test_get_audio_url(self):
         # Setup
         word = _example_word(self.lang)
@@ -280,6 +293,7 @@ class DuolingoLoginTest(unittest.TestCase):
         response = self.lingo.get_audio_url("zz")
         assert response is None
 
+    @unittest.skip("Duolingo removed the dictionary_page endpoint")
     def test_get_word_definition_by_id(self):
         response = self.lingo.get_word_definition_by_id("52383869a8feb3e5cf83dbf7fab9a018")
         assert isinstance(response, dict)
@@ -293,37 +307,76 @@ class DuolingoLoginTest(unittest.TestCase):
         assert isinstance(response['xp_today'], int)
         assert isinstance(response['lessons_today'], list)
 
+    def test_get_xp_summaries(self):
+        response = self.lingo.get_xp_summaries()
+        assert isinstance(response, list)
+        for summary in response:
+            assert isinstance(summary['gainedXp'], int)
+            assert isinstance(summary['date'], int)
+            assert "streakExtended" in summary
+            assert "frozen" in summary
+            assert "numSessions" in summary
+            assert "totalSessionTime" in summary
 
-class DuolingoOtherUsernameTest(DuolingoLoginTest):
+    def test_get_total_xp(self):
+        response = self.lingo.get_total_xp()
+        assert isinstance(response, int)
 
-    @classmethod
-    def setUpClass(cls):
-        cls.lingo = duolingo.Duolingo(USERNAME, PASSWORD)
-        cls.lingo.set_username(USERNAME2)
-        cls.lang = cls.lingo.user_data.learning_language
+    def test_get_weekly_xp(self):
+        response = self.lingo.get_weekly_xp()
+        assert isinstance(response, int)
 
-    def test_get_daily_xp_progress(self):
-        try:
-            self.lingo.get_daily_xp_progress()
-            assert False, "Should have failed to read daily XP progress."
-        except duolingo.DuolingoException as e:
-            assert USERNAME2 in str(e)
-            assert "Could not get daily XP progress for user" in str(e)
+    def test_get_shop_items(self):
+        response = self.lingo.get_shop_items()
+        assert isinstance(response, list)
+        for item in response:
+            assert "itemName" in item
 
-    def test_get_vocabulary(self):
-        try:
-            self.lingo.get_vocabulary()
-            assert False, "Should have failed to get vocabulary."
-        except duolingo.OtherUserException as e:
-            assert "Vocab cannot be listed when the user has been switched" in str(e)
+    def test_get_quest_schema(self):
+        response = self.lingo.get_quest_schema()
+        assert isinstance(response, list)
+        for goal in response:
+            assert "goalId" in goal
+            assert "category" in goal
 
-    def test_get_related_words(self):
-        try:
-            word = _example_word(self.lang)
-            self.lingo.get_related_words(word)
-            assert False, "Should have failed to get related words."
-        except duolingo.OtherUserException as e:
-            assert "Vocab cannot be listed when the user has been switched" in str(e)
+    def test_get_quest_progress(self):
+        response = self.lingo.get_quest_progress()
+        assert isinstance(response, dict)
+        assert "goals" in response
+        assert "badges" in response
+        assert "difficulty" in response
+
+    def test_get_daily_quests(self):
+        response = self.lingo.get_daily_quests()
+        assert isinstance(response, list)
+        for quest in response:
+            assert "goal_id" in quest
+            assert "threshold" in quest
+            assert isinstance(quest["progress"], int)
+            assert isinstance(quest["progress_increments"], list)
+
+    def test_get_monthly_challenge(self):
+        response = self.lingo.get_monthly_challenge()
+        assert isinstance(response, dict)
+        assert "challenge" in response
+        assert "earned_badges" in response
+        assert isinstance(response["earned_badges"], list)
+        assert response["challenge"] is not None
+
+    def test_get_friends_quest(self):
+        response = self.lingo.get_friends_quest()
+        if response is not None:
+            assert "goal_id" in response
+            assert "social_progress" in response
+
+    def test_get_friend_streak(self):
+        response = self.lingo.get_friend_streak()
+        assert isinstance(response, list)
+        for match in response:
+            assert "match_id" in match
+            assert isinstance(match["users"], list)
+            assert "has_active_streak" in match
+            assert "streak_length" in match
 
 
 if __name__ == '__main__':

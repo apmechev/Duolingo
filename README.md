@@ -33,6 +33,15 @@ Note: You are now required to provide a password to get any data from the Duolin
 - [Get daily XP progress](#get-daily-xp-progress)
 - [Buy Item](#buy-item)
 - [Buy Streak Freeze](#buy-streak-freeze)
+- [Get League Info](#get-league-info)
+- [Get Daily Quests](#get-daily-quests)
+- [Get Monthly Challenge](#get-monthly-challenge)
+- [Get Friends Quest](#get-friends-quest)
+- [Get Quest Progress](#get-quest-progress)
+- [Get XP Summaries](#get-xp-summaries)
+- [Get Friend Streak](#get-friend-streak)
+- [Get Shop Items](#get-shop-items)
+- [Get Total XP](#get-total-xp)
 ###### Switch account being read
 - [Set username](#set-username)
 ###### Language Information
@@ -252,6 +261,146 @@ print(lingo.buy_streak_freeze())
 # Sample Response
 True
 ```
+
+#### Get League Info
+`lingo.get_league_info()`
+
+Returns the user's current league tier (Bronze..Diamond), position, score, promotion/demotion flags, contest dates and lifetime league stats.
+```py
+# Sample Request
+lingo = duolingo.Duolingo('kartik', '...')
+print(lingo.get_league_info())
+
+# Sample Response
+{
+    'tier': 9,
+    'tier_name': 'Diamond',
+    'position': 4,
+    'cohort_size': 15,
+    'score': 320,
+    'contest_start': '2026-08-16T20:00:00Z',
+    'contest_end': '2026-08-23T20:00:00Z',
+    'is_demoted': False,
+    'is_promoted': True,
+    'is_winner': False,
+    'streak_in_tier': 2,
+    'stats': {'highest_league': 9, 'num_wins': 1, ...}
+}
+```
+
+#### Get Daily Quests
+`lingo.get_daily_quests()`
+
+Returns the user's daily quest progress from the goals API, with each quest's title, metric, threshold and progress.
+```py
+# Sample Request
+lingo = duolingo.Duolingo('kartik', '...')
+print(lingo.get_daily_quests())
+
+# Sample Response
+[
+    {
+        'goal_id': 'lessons_core_daily_quest',
+        'title': 'Complete 2 lessons',
+        'metric': 'LESSONS',
+        'threshold': 2,
+        'progress': 2,
+        'progress_increments': [2],
+        'social_progress': None,
+        'badge_id': None
+    },
+    ...
+]
+```
+
+#### Get Monthly Challenge
+`lingo.get_monthly_challenge()`
+
+Returns the current monthly challenge progress and the badges earned for previous monthly challenges.
+```py
+# Sample Request
+lingo = duolingo.Duolingo('kartik', '...')
+print(lingo.get_monthly_challenge())
+
+# Sample Response
+{
+    'challenge': {
+        'goal_id': '2026_08_monthly_challenge',
+        'title': 'August Quest',
+        'threshold': 55,
+        'progress': 36,
+        'progress_increments': [...],
+        'badge_id': '2026_08_monthly_challenge'
+    },
+    'earned_badges': ['2026_07_monthly_challenge', ...]
+}
+```
+
+#### Get Friends Quest
+`lingo.get_friends_quest()`
+
+Returns the current friends quest progress including the partner, or `None` when no friends quest is active.
+```py
+# Sample Request
+lingo = duolingo.Duolingo('kartik', '...')
+print(lingo.get_friends_quest())
+
+# Sample Response
+{
+    'goal_id': 'duo_snail_friends_quest',
+    'threshold': 550,
+    'progress': 550,
+    'progress_increments': [50, 120, 110, 0, 0],
+    'social_progress': [{'userId': '...', 'displayName': '...', 'avatarUrl': '...'}]
+}
+```
+
+#### Get Quest Progress
+`lingo.get_quest_progress()`
+
+Returns the raw goals API progress (all goal types, historical stats, badges, difficulty). See also `lingo.get_quest_schema()` for the goal definitions.
+
+#### Get XP Summaries
+`lingo.get_xp_summaries()`
+
+Returns the user's daily XP summaries: XP gained, whether the streak was extended, frozen or repaired, number of sessions and total session time per day.
+```py
+# Sample Request
+lingo = duolingo.Duolingo('kartik', '...')
+print(lingo.get_xp_summaries())
+
+# Sample Response
+[
+    {
+        'gainedXp': 150,
+        'frozen': False,
+        'streakExtended': True,
+        'date': 1787097600,
+        'userId': 188895,
+        'repaired': False,
+        'dailyGoalXp': 1,
+        'numSessions': 2,
+        'totalSessionTime': 112,
+        'shielded': False
+    },
+    ...
+]
+```
+
+#### Get Friend Streak
+`lingo.get_friend_streak()`
+
+Returns the user's friend streak matches with the partner, streak length and dates.
+
+#### Get Shop Items
+`lingo.get_shop_items()`
+
+Returns the user's inventory (streak freezes, XP boosts, avatar items, ...).
+
+#### Get Total XP
+`lingo.get_total_xp()` and `lingo.get_weekly_xp()`
+
+Return the user's total XP and XP gained this week as integers.
 
 #### Set username
 `lingo.set_username(username)`
